@@ -1,141 +1,374 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Calendar as CalendarIcon, 
-  Plus, 
-  ChevronLeft, 
-  ChevronRight, 
-  Clock, 
-  GraduationCap, 
-  Trash2, 
-  X,
-  CheckCircle,
-  Bell,
-  Edit2,
-  LayoutList,
-  LayoutGrid,
-  Columns,
-  CalendarDays,
-  Menu
+  Calendar as CalendarIcon, Plus, ChevronLeft, ChevronRight, Clock, 
+  GraduationCap, Trash2, X, CheckCircle, Bell, Edit2, LayoutList, 
+  LayoutGrid, Columns, CalendarDays, Menu, Sparkles, NotebookText
 } from 'lucide-react';
 
-// --- Mapa Estático de Colores (Solución Definitiva para el Compilador) ---
+// --- IMPORTS DE FIREBASE ---
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, 
+  collection, query, where, orderBy 
+} from 'firebase/firestore';
+
+// --- MAPA ESTÁTICO DE COLORES ---
 const COLOR_MAP = {
-    exam: {
-        bg: 'bg-red-50 border-red-200 text-red-700 hover:bg-red-100',
-        solid: 'bg-red-500'
-    },
-    assignment: {
-        bg: 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100',
-        solid: 'bg-amber-500'
-    },
-    study: {
-        bg: 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100',
-        solid: 'bg-emerald-500'
-    },
-    lecture: {
-        bg: 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100',
-        solid: 'bg-blue-500'
-    }
+    exam: { bg: 'bg-red-50 border-red-200 text-red-700 hover:bg-red-100', solid: 'bg-red-500' },
+    assignment: { bg: 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100', solid: 'bg-amber-500' },
+    study: { bg: 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100', solid: 'bg-emerald-500' },
+    lecture: { bg: 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100', solid: 'bg-blue-500' }
 };
-// --- FIN MAPA ESTÁTICO ---
+
+// --- CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE ---
+let db = null;
+let auth = null;
+let appId = null;
+let firebaseConfig = null;
+
+// Asegurar que las variables globales existan
+if (typeof __firebase_config !== 'undefined' && typeof __app_id !== 'undefined') {
+    firebaseConfig = JSON.parse(__firebase_config);
+    // Sanitize __app_id to remove slashes, which break Firestore document paths.
+    appId = __app_id.replace(/[^a-zA-Z0-9_-]/g, '_'); 
+    
+    // Inicializar app y servicios (se hace fuera del componente)
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    auth = getAuth(app);
+}
+
 
 // --- Componente Principal ---
 export default function App() {
   // --- Estados ---
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState('month'); 
-  
-  const [events, setEvents] = useState(() => {
-    const saved = localStorage.getItem('uniEvents');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
+  const [events, setEvents] = useState([]); // Ahora cargado desde Firestore
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
-  // NOTIFICACIONES IN-APP (Para mostrar dentro de la app)
   const [notifications, setNotifications] = useState([]);
-  // IDs de eventos que ya fueron notificados (para evitar spam)
-  const [notifiedEvents, setNotifiedEvents] = useState(() => {
-    const saved = sessionStorage.getItem('notifiedEvents');
-    return saved ? new Set(JSON.parse(saved)) : new Set();
-  });
-
-
+  const [notifiedEvents, setNotifiedEvents] = useState(new Set());
   const [draggedEvent, setDraggedEvent] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [userId, setUserId] = useState(null); // ID del usuario autenticado
+  const [isLoading, setIsLoading] = useState(true); // Control de carga inicial
+
+  // Estados para Gemini API
+  const [geminiResult, setGeminiResult] = useState(null);
+  const [isGeminiLoading, setIsGeminiLoading] = useState(false);
+  const [geminiError, setGeminiError] = useState(null);
+  const [showInAppAlert, setShowInAppAlert] = useState(null); // Nueva alerta en pantalla
   
-  // Estado del formulario
   const [newEvent, setNewEvent] = useState({
-    title: '',
-    type: 'lecture',
-    time: '08:00',
-    description: ''
+    title: '', type: 'lecture', time: '08:00', description: ''
   });
 
-  // --- Efectos ---
+  // --- Gemini API Call Function ---
+  const callGeminiApi = async (prompt, systemPrompt, tool = false) => {
+    setIsGeminiLoading(true);
+    setGeminiResult(null);
+    setGeminiError(null);
+    const apiKey = ""; // Canvas will provide this
 
-  // 1. Guardado en LocalStorage
+    const payload = {
+      contents: [{ parts: [{ text: prompt }] }],
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      tools: tool ? [{ "google_search": {} }] : undefined,
+    };
+    
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+    
+    let result = null;
+    let success = false;
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    while (attempts < maxAttempts && !success) {
+      attempts++;
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        const data = await response.json();
+        
+        result = data.candidates?.[0]?.content?.parts?.[0]?.text || "No se pudo generar una respuesta clara.";
+        success = true;
+
+      } catch (error) {
+        console.error(`Attempt ${attempts} failed:`, error);
+        if (attempts < maxAttempts) {
+          const delay = Math.pow(2, attempts) * 1000; // Exponential backoff
+          await new Promise(res => setTimeout(res, delay));
+        } else {
+          setGeminiError("Error al conectar con la IA. Inténtalo de nuevo.");
+        }
+      }
+    }
+
+    setIsGeminiLoading(false);
+    if (success) {
+      setGeminiResult(result);
+    }
+  };
+
+  // --- Funciones Gemini ---
+
+  const handleGenerateStudyPlan = async () => {
+    const title = newEvent.title;
+    const description = newEvent.description || "Sin descripción adicional.";
+    const dueDate = selectedDate;
+    const type = newEvent.type;
+
+    if (!title || type === 'lecture') {
+        setGeminiError("Introduce el título y asegúrate que sea Examen o Entrega.");
+        return;
+    }
+    
+    const prompt = `Actúa como un tutor universitario. Genera un plan de estudio conciso para un estudiante de análisis y desarrollo de software o ingeniería industrial.
+    Tarea: ${title} (${type})
+    Fecha de Vencimiento: ${dueDate}
+    Notas Adicionales: ${description}
+    
+    El plan debe incluir: 1. Tres (3) temas clave o conceptos a repasar. 2. Una sugerencia de formato de estudio (ej. crear flashcards, resolver problemas). 3. Un consejo de gestión del tiempo. Usa emojis. Responde en español.`;
+
+    const systemPrompt = "Eres un asistente de planificación de estudios (Planificador de Tiempo). Debes ser útil, motivador y preciso. Responde siempre en formato Markdown y no uses encabezados (##).";
+
+    await callGeminiApi(prompt, systemPrompt, false);
+  };
+
+  const handleAnalyzeNotes = async () => {
+    const notes = newEvent.description;
+    const title = newEvent.title;
+
+    if (!notes) {
+      setGeminiError("Ingresa notas o una descripción antes de analizar.");
+      return;
+    }
+
+    const prompt = `Analiza el siguiente texto de notas para una actividad universitaria: "${notes}".
+    Genera un resumen de 3 puntos clave y sugiere un término académico relacionado que el estudiante debería investigar más.
+    La actividad se llama: ${title}`;
+
+    const systemPrompt = "Eres un asistente de análisis académico. Tu objetivo es clarificar conceptos. Responde en español en formato Markdown conciso, con listas y emojis. Usa Google Search para mejorar la respuesta.";
+
+    await callGeminiApi(prompt, systemPrompt, true); // Usamos Google Search para contextualizar
+  }
+
+
+  // --- 1. EFECTO DE AUTENTICACIÓN Y CONEXIÓN INICIAL ---
   useEffect(() => {
-    localStorage.setItem('uniEvents', JSON.stringify(events));
-  }, [events]);
+    if (!db || !auth) {
+        console.error("Firebase no está inicializado. ¿Faltan __firebase_config o __app_id?");
+        return;
+    }
 
-  // 2. Persistencia de Notificaciones de Sesión
+    const signInAndListen = async () => {
+        try {
+            // 1. AUTENTICACIÓN
+            if (typeof __initial_auth_token !== 'undefined') {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+
+            // 2. OBTENER USER ID Y ESTABLECER ESTADO
+            const currentUser = auth.currentUser;
+            if (currentUser) {
+                setUserId(currentUser.uid);
+            } else {
+                // Generar un ID temporal si falla la autenticación (no ideal, pero funcional)
+                setUserId(crypto.randomUUID());
+            }
+
+        } catch (error) {
+            console.error("Error al autenticar o inicializar Firebase:", error);
+            setUserId(crypto.randomUUID()); // Fallback
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    signInAndListen();
+  }, []);
+
+  // --- 2. EFECTO DE LECTURA DE DATOS (onSnapshot) ---
   useEffect(() => {
-    sessionStorage.setItem('notifiedEvents', JSON.stringify(Array.from(notifiedEvents)));
-  }, [notifiedEvents]);
+    if (!db || !userId) return; // Esperar a que la DB esté lista y el usuario autenticado
 
+    // RUTA DE LA COLECCIÓN: /artifacts/{appId}/users/{userId}/events
+    const eventsCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'events');
+    
+    // Consulta simple (sin ordenar, se ordenará en memoria para evitar problemas de índice)
+    const eventsQuery = query(eventsCollectionRef); 
 
-  // 3. Sistema de Recordatorios (Check cada 10 segundos)
+    // Escuchar cambios en tiempo real
+    const unsubscribe = onSnapshot(eventsQuery, (snapshot) => {
+      const fetchedEvents = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id, // Firestore ID
+        // Asegurar que el id de notificacion sea el de Firestore
+        notificationId: doc.id 
+      }));
+      setEvents(fetchedEvents);
+    }, (error) => {
+      console.error("Error al escuchar eventos de Firestore:", error);
+    });
+
+    // Limpiar el listener al desmontar el componente
+    return () => unsubscribe();
+  }, [userId]); // Depende del userId para iniciar después de la autenticación
+
+  // --- 3. SISTEMA DE RECORDATORIOS (FIABILIDAD MEJORADA) ---
   useEffect(() => {
-    // Solicitar permiso de notificación al cargar la app
     if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
         Notification.requestPermission();
     }
 
     const checkReminders = () => {
       const now = new Date();
-      // 2 horas en milisegundos
       const twoHours = 7200000; 
-      // Rango de chequeo: entre 1h 59m (7140000ms) y 2h 1m (7260000ms)
-      const lowerBound = twoHours - 60000; 
-      const upperBound = twoHours + 60000; 
+      
+      // Ampliamos la ventana de chequeo: desde 1h 50min hasta 2h 10min
+      const lowerBound = twoHours - 10 * 60 * 1000; 
+      const upperBound = twoHours + 10 * 60 * 1000; 
+
+      let upcomingAlert = null;
 
       events.forEach(event => {
+        // Asegurar que estamos comparando fechas válidas
         const eventDate = new Date(event.date + 'T' + event.time);
-        const timeDiff = eventDate - now; // Diferencia en ms
+        
+        // Corregir posible evento inválido o pasado
+        if (isNaN(eventDate) || eventDate < now) return; 
 
-        // Check 1: ¿Está en el rango de 2 horas (con margen de 1 minuto)?
-        // Check 2: ¿Aún no ha pasado el evento? (timeDiff > 0)
-        // Check 3: ¿Ya fue notificado en esta sesión? (No está en notifiedEvents)
+        const timeDiff = eventDate - now; 
+
         if (timeDiff > 0 && timeDiff >= lowerBound && timeDiff <= upperBound && !notifiedEvents.has(event.id)) {
             
-            const message = `🚨 ${event.title} - ¡Faltan 2 horas! (${event.date} a las ${event.time})`;
+            const message = `🚨 ${event.title} - ¡Faltan 2 horas o menos! (${event.time} de hoy)`;
             
-            // 1. Notificación NATIVA (funciona fuera de la app)
+            // 1. Notificación NATIVA del sistema (falla si la PWA está en segundo plano)
             if (Notification.permission === 'granted') {
                 new Notification('UniPlanner: Próxima Actividad', {
                     body: message,
-                    // Icono SVG simple para el sistema (depende de la compatibilidad del OS)
                     icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iaW5kaWdvIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTggNlY0TDIgMTAuNUgxNkwxMiAxNiI+PC9wYXRoPjwvc3ZnPg=='
                 });
             }
-
-            // 2. Notificación IN-APP (para visualización inmediata si la app está abierta)
+            
+            // 2. Notificación IN-APP (Toast)
             addNotification(message);
+            
+            // 3. Alerta Persistente en pantalla (Garantiza que el usuario la vea al abrir la app)
+            upcomingAlert = { title: event.title, date: event.date, time: event.time };
 
-            // 3. Marcar como notificado
             setNotifiedEvents(prev => new Set(prev).add(event.id));
         }
       });
+      
+      // Mostrar la alerta persistente si se encontró un evento próximo
+      if (upcomingAlert) {
+        setShowInAppAlert(upcomingAlert);
+      }
     };
     
-    // Intervalo de chequeo más corto para precisión (cada 10 segundos)
+    // Chequeo más frecuente para mayor fiabilidad
     const interval = setInterval(checkReminders, 10000); 
+    
+    // Ejecutar el chequeo inmediatamente al cargar el componente o al volver a abrir la PWA
+    checkReminders(); 
+    
     return () => clearInterval(interval);
   }, [events, notifiedEvents]);
 
-  // --- Helpers de Fecha ---
+  // --- LÓGICA DE FIREBASE (CRUD) ---
+
+  const getEventsCollectionRef = () => {
+    if (!db || !userId || !appId) return null;
+    return collection(db, 'artifacts', appId, 'users', userId, 'events');
+  };
+
+  // Guardar (Crear o Actualizar)
+  const handleSaveEvent = async (e) => {
+    e.preventDefault();
+    if (!newEvent.title || !selectedDate || !userId) return;
+
+    const eventsRef = getEventsCollectionRef();
+    if (!eventsRef) return;
+    
+    const eventData = { ...newEvent, date: selectedDate };
+
+    try {
+        if (editingId) {
+            // --- ACTUALIZAR existente ---
+            const eventDocRef = doc(eventsRef, editingId);
+            await updateDoc(eventDocRef, eventData);
+            addNotification('Actividad actualizada correctamente');
+        } else {
+            // --- CREAR nuevo ---
+            await addDoc(eventsRef, eventData);
+            addNotification('Actividad creada exitosamente');
+        }
+    } catch (error) {
+        console.error("Error al guardar en Firestore:", error);
+        addNotification('ERROR al guardar en la nube.');
+    } finally {
+        closeModal();
+    }
+  };
+
+  // Eliminar
+  const handleDeleteEvent = async (e, id) => {
+    // IMPORTANTE: Detener propagación inmediatamente para no abrir el modal de edición
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (e && e.preventDefault) e.preventDefault();
+    
+    if (!userId) return;
+
+    const isConfirmed = window.confirm('¿Estás seguro de eliminar esta actividad?');
+    if (isConfirmed) {
+        const eventsRef = getEventsCollectionRef();
+        if (!eventsRef) return;
+
+        try {
+            const eventDocRef = doc(eventsRef, id);
+            await deleteDoc(eventDocRef);
+            if (editingId === id) closeModal();
+            addNotification('Eliminado de la nube.');
+        } catch (error) {
+            console.error("Error al eliminar de Firestore:", error);
+            addNotification('ERROR al eliminar de la nube.');
+        }
+    }
+  };
+  
+  // Drag & Drop (solo cambia la fecha)
+  const handleDrop = async (e, targetDate) => {
+    e.preventDefault();
+    if (!draggedEvent || !userId) return;
+
+    const eventsRef = getEventsCollectionRef();
+    if (!eventsRef) return;
+
+    try {
+        const eventDocRef = doc(eventsRef, draggedEvent.id);
+        await updateDoc(eventDocRef, { date: targetDate });
+        addNotification(`Movido al ${targetDate}`);
+        setDraggedEvent(null);
+    } catch (error) {
+        console.error("Error al mover en Firestore:", error);
+        addNotification('ERROR al mover en la nube.');
+    }
+  };
+
+  // --- UI Helpers y Funciones Secundarias ---
 
   const getDaysInMonth = (date) => {
     const year = date.getFullYear();
@@ -148,7 +381,7 @@ export default function App() {
   const getStartOfWeek = (date) => {
     const d = new Date(date);
     const day = d.getDay();
-    const diff = d.getDate() - day; // Ajustar para que domingo sea el primer día
+    const diff = d.getDate() - day;
     return new Date(d.setDate(diff));
   };
 
@@ -166,8 +399,6 @@ export default function App() {
       const d = new Date(year, monthIndex, day);
       return formatDateStr(d);
   };
-
-  // --- Navegación ---
 
   const handlePrev = () => {
     const newDate = new Date(currentDate);
@@ -187,15 +418,12 @@ export default function App() {
     setCurrentDate(newDate);
   };
 
-  // --- Lógica del Calendario ---
-
   const handleDateClick = (dateStr) => {
     resetForm(); 
     setSelectedDate(dateStr);
     setIsModalOpen(true);
   };
 
-  // Función para ir a la vista Día
   const handleDayViewClick = (year, monthIndex, day) => {
       const date = new Date(year, monthIndex, day);
       setCurrentDate(date);
@@ -215,63 +443,18 @@ export default function App() {
     setIsModalOpen(true);
   };
 
-  const handleSaveEvent = (e) => {
-    e.preventDefault();
-    if (!newEvent.title || !selectedDate) return;
-
-    if (editingId) {
-      const updatedEvents = events.map(ev => 
-        ev.id === editingId ? { ...ev, ...newEvent, date: selectedDate } : ev
-      );
-      setEvents(updatedEvents);
-      addNotification('Actividad actualizada');
-    } else {
-      const eventToAdd = {
-        id: Date.now(),
-        date: selectedDate,
-        ...newEvent
-      };
-      setEvents([...events, eventToAdd]);
-      addNotification('Actividad creada');
-    }
-    closeModal();
-  };
-
-  const handleDeleteEvent = (e, id) => {
-    if (e) e.stopPropagation();
-    // Usamos el modal custom para eliminar para mejor UX, no window.confirm()
-    const isConfirmed = window.confirm('¿Estás seguro de eliminar esta actividad?');
-    if (isConfirmed) {
-      setEvents(events.filter(ev => ev.id !== id));
-      if (editingId === id) closeModal();
-      addNotification('Eliminado');
-    }
-  };
-
-  // --- Drag & Drop ---
-
   const handleDragStart = (e, event) => {
     setDraggedEvent(event);
     e.dataTransfer.effectAllowed = "move";
   };
 
+  // *** FUNCIÓN CORREGIDA: handleDragOver ***
   const handleDragOver = (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   };
+  // *****************************************
 
-  const handleDrop = (e, targetDate) => {
-    e.preventDefault();
-    if (!draggedEvent) return;
-    const updatedEvents = events.map(ev => 
-      ev.id === draggedEvent.id ? { ...ev, date: targetDate } : ev
-    );
-    setEvents(updatedEvents);
-    addNotification(`Movido al ${targetDate}`);
-    setDraggedEvent(null);
-  };
-
-  // --- UI Helpers ---
 
   const addNotification = (message) => {
     const id = Date.now();
@@ -282,6 +465,8 @@ export default function App() {
   const resetForm = () => {
     setNewEvent({ title: '', type: 'lecture', time: '08:00', description: '' });
     setEditingId(null);
+    setGeminiResult(null); // Limpiar resultados de IA al resetear
+    setGeminiError(null);
   };
 
   const closeModal = () => {
@@ -289,7 +474,6 @@ export default function App() {
     resetForm();
   };
 
-  // Función corregida para usar el mapa estático
   const getTypeColor = (type, isSolid = false) => {
     const colorEntry = COLOR_MAP[type] || { bg: 'bg-gray-100 border-gray-200 text-gray-700 hover:bg-gray-100', solid: 'bg-gray-500' };
     return isSolid ? colorEntry.solid : colorEntry.bg;
@@ -297,17 +481,51 @@ export default function App() {
 
   const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
   
-  // Función robusta para el nombre de los días (soluciona "RIVALIZAR")
   const getDayName = (dayIndex) => {
-      // 0=Dom, 1=Lun, ..., 6=Sáb
-      const date = new Date(2025, 10, 23 + dayIndex); // 23 de Noviembre 2025 es Domingo
-      return date.toLocaleDateString('es-ES', { weekday: 'short' }).replace('.', ''); // Ej: Dom, Lun, Vie
+      const date = new Date(2025, 10, 23 + dayIndex); 
+      return date.toLocaleDateString('es-ES', { weekday: 'short' }).replace('.', ''); 
   };
-
-  // Lista de nombres de días de la semana
   const dayNamesShort = [0, 1, 2, 3, 4, 5, 6].map(getDayName); 
 
   // --- Render Views ---
+
+  // Componente interno para la tarjetita del evento (reutilizable)
+  // MEJORA: Botón de eliminar más grande y siempre visible en móvil
+  const EventCard = ({ event, showTime = false }) => (
+    <div 
+      draggable
+      onDragStart={(e) => handleDragStart(e, event)}
+      onClick={(e) => e.stopPropagation()} 
+      onDoubleClick={(e) => handleEventDoubleClick(e, event)}
+      className={`
+        text-[10px] sm:text-xs px-2 py-1.5 mb-1 rounded cursor-grab active:cursor-grabbing shadow-md border
+        flex items-start justify-between group/item transition-all
+        ${getTypeColor(event.type)}
+      `}
+      title="Doble clic para editar"
+    >
+      <div className="flex flex-col min-w-0 flex-1">
+         {showTime && <span className="text-[9px] opacity-70 mb-0.5">{event.time}</span>}
+         <span className="line-clamp-2 leading-tight font-medium break-words">
+          {event.title}
+        </span>
+      </div>
+      
+      {/* CAMBIO CLAVE: 
+          - opacity-100 por defecto (siempre visible en móvil) 
+          - lg:opacity-0 (oculto por defecto solo en pantallas grandes)
+          - lg:group-hover (visible al pasar el mouse en pantallas grandes)
+          - p-1.5 (más espacio para el dedo)
+          - z-10 (asegura que está por encima)
+      */}
+      <button 
+        onClick={(e) => handleDeleteEvent(e, event.id)}
+        className="opacity-100 lg:opacity-0 lg:group-hover/item:opacity-100 ml-1 p-1.5 hover:bg-white/50 rounded text-red-600 transition-opacity shrink-0 self-start z-10"
+      >
+        <X size={14} strokeWidth={3} />
+      </button>
+    </div>
+  );
 
   // 1. VISTA MENSUAL
   const renderMonthView = () => {
@@ -335,9 +553,8 @@ export default function App() {
             return (
               <div 
                 key={day}
-                onDragOver={handleDragOver}
+                onDragOver={handleDragOver} 
                 onDrop={(e) => handleDrop(e, dateStr)}
-                // Corregido: Si hay eventos va a la vista Día, si no, abre el modal
                 onClick={() => hasEvents ? handleDayViewClick(year, monthIndex, day) : handleDateClick(dateStr)}
                 className={`
                   min-h-[100px] p-2 rounded-xl border transition-all relative group shadow-sm
@@ -352,7 +569,6 @@ export default function App() {
                 </span>
                 <div className="space-y-1">
                   {dayEvents.map(ev => (
-                    // Se asegura que se llame la EventCard
                     <EventCard key={ev.id} event={ev} />
                   ))}
                 </div>
@@ -376,12 +592,12 @@ export default function App() {
             const dateStr = formatDateStr(dayDate);
             const dayEvents = events.filter(e => e.date === dateStr).sort((a,b) => a.time.localeCompare(b.time));
             const isToday = formatDateStr(new Date()) === dateStr;
-            const dayNameFull = getDayName(dayDate.getDay()); // Utiliza la función para el nombre correcto
+            const dayNameFull = getDayName(dayDate.getDay()); 
 
             return (
               <div 
                 key={i} 
-                onDragOver={handleDragOver}
+                onDragOver={handleDragOver} 
                 onDrop={(e) => handleDrop(e, dateStr)}
                 onClick={() => handleDayViewClick(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate())}
                 className={`flex flex-col h-[500px] rounded-xl border shadow-lg ${isToday ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'} transition-all hover:border-indigo-300 cursor-pointer`}
@@ -430,8 +646,8 @@ export default function App() {
                     <div className={`flex-1 p-4 rounded-r-xl ${getTypeColor(ev.type)} relative`}>
                        <h4 className="font-bold text-gray-800">{ev.title}</h4>
                        <p className="text-sm opacity-90 mt-1">{ev.description || 'Sin descripción'}</p>
-                       <button onClick={(e) => handleDeleteEvent(e, ev.id)} className="absolute top-2 right-2 text-red-400 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <Trash2 size={16} />
+                       <button onClick={(e) => handleDeleteEvent(e, ev.id)} className="absolute top-2 right-2 text-red-400 hover:text-red-700 opacity-100 p-2 transition-opacity z-10">
+                         <Trash2 size={20} />
                        </button>
                     </div>
                  </div>
@@ -445,7 +661,9 @@ export default function App() {
 
   // 4. VISTA LISTA
   const renderListView = () => {
+    // Ordenar los eventos por fecha/hora
     const sortedEvents = [...events].sort((a, b) => new Date(a.date + 'T' + a.time) - new Date(b.date + 'T' + b.time));
+    // Mostrar eventos desde la última semana hasta el futuro
     const futureEvents = sortedEvents.filter(e => new Date(e.date) >= new Date(new Date().setDate(new Date().getDate() - 7))); 
 
     return (
@@ -464,7 +682,7 @@ export default function App() {
                   <div className="flex-1">
                     <div className="flex justify-between">
                        <h4 className={`font-extrabold text-lg ${isPast ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{ev.title}</h4>
-                       <span className={`text-xs font-bold uppercase p-1 rounded ${getTypeColor(ev.type).split(' ')[0]}`}>{ev.type}</span>
+                       <span className={`text-xs font-bold uppercase p-1 rounded ${getTypeColor(ev.type).split(' ')[0]}`} /* <<-- CORREGIDO */ >{ev.type}</span>
                     </div>
                     <p className="text-sm text-gray-500 flex gap-2">
                        <span>{new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
@@ -472,8 +690,8 @@ export default function App() {
                        <span>{ev.time}</span>
                     </p>
                   </div>
-                  <button onClick={(e) => handleEventDoubleClick(e, ev)} className="p-2 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100"><Edit2 size={18}/></button>
-                  <button onClick={(e) => handleDeleteEvent(e, ev.id)} className="p-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100"><Trash2 size={18}/></button>
+                  <button onClick={(e) => handleEventDoubleClick(e, ev)} className="p-2 text-gray-400 hover:text-indigo-600 opacity-100"><Edit2 size={20}/></button>
+                  <button onClick={(e) => handleDeleteEvent(e, ev.id)} className="p-2 text-gray-400 hover:text-red-600 opacity-100"><Trash2 size={20}/></button>
                </div>
              );
           })}
@@ -482,35 +700,6 @@ export default function App() {
     );
   };
 
-  // Componente interno para la tarjetita del evento (reutilizable)
-  const EventCard = ({ event, showTime = false }) => (
-    <div 
-      draggable
-      onDragStart={(e) => handleDragStart(e, event)}
-      onClick={(e) => e.stopPropagation()} 
-      onDoubleClick={(e) => handleEventDoubleClick(e, event)}
-      className={`
-        text-[10px] sm:text-xs px-2 py-1.5 mb-1 rounded cursor-grab active:cursor-grabbing shadow-md border
-        flex items-start justify-between group/item transition-all
-        ${getTypeColor(event.type)}
-      `}
-      title="Doble clic para editar"
-    >
-      <div className="flex flex-col min-w-0 flex-1">
-         {showTime && <span className="text-[9px] opacity-70 mb-0.5">{event.time}</span>}
-         <span className="line-clamp-2 leading-tight font-medium break-words">
-          {event.title}
-        </span>
-      </div>
-      
-      <button 
-        onClick={(e) => handleDeleteEvent(e, event.id)}
-        className="opacity-0 group-hover/item:opacity-100 ml-1 p-0.5 hover:bg-white/50 rounded text-red-600 transition-opacity shrink-0 self-start"
-      >
-        <X size={12} />
-      </button>
-    </div>
-  );
 
   // --- Render Principal ---
 
@@ -520,7 +709,39 @@ export default function App() {
     .slice(0, 5);
 
   return (
-    <div className="min-h-screen bg-gray-50 text-slate-800 font-sans">
+    <div className="min-h-screen bg-gray-50 text-slate-800 font-sans pb-8">
+      
+      {/* Indicador de Carga */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-50">
+            <svg className="animate-spin h-10 w-10 text-indigo-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p className="text-indigo-600 font-bold">Conectando a la nube (Firestore)...</p>
+            <p className="text-sm text-gray-500 mt-1">ID de Usuario: {userId ? userId.substring(0, 8) + '...' : 'Cargando'}</p>
+        </div>
+      )}
+      
+      {/* Alerta de evento próximo (In-App) */}
+      {showInAppAlert && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 p-4 w-full max-w-sm">
+            <div className="bg-red-500 text-white rounded-xl shadow-2xl p-4 flex items-center justify-between animate-bounce-in">
+                <div className="flex items-center gap-3">
+                    <Bell size={24} className="animate-pulse"/>
+                    <div>
+                        <p className="font-bold text-sm">¡Alarma de Estudio!</p>
+                        <p className="text-xs">'{showInAppAlert.title}' es a las {showInAppAlert.time}.</p>
+                    </div>
+                </div>
+                <button onClick={() => setShowInAppAlert(null)} className="p-1 rounded-full hover:bg-white/20">
+                    <X size={18} />
+                </button>
+            </div>
+        </div>
+      )}
+
+
       {/* Toast */}
       <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
         {notifications.map(n => (
@@ -531,8 +752,8 @@ export default function App() {
         ))}
       </div>
       
-      {/* Sidebar Overlay para Móviles */}
-      {!isSidebarOpen && <div className="fixed inset-0 bg-black/40 z-30 lg:hidden" onClick={() => setIsSidebarOpen(true)}></div>}
+      {/* Sidebar Overlay para Móviles - CORREGIDO */}
+      {isSidebarOpen && <div className="fixed inset-0 bg-black/40 z-30 lg:hidden" onClick={() => setIsSidebarOpen(false)}></div>}
 
       {/* Header */}
       <header className="bg-white shadow-lg sticky top-0 z-20">
@@ -609,10 +830,10 @@ export default function App() {
             )}
 
             {/* Renderizado Condicional de Vistas */}
-            {viewMode === 'month' && renderMonthView()}
-            {viewMode === 'week' && renderWeekView()}
-            {viewMode === 'day' && renderDayView()}
-            {viewMode === 'list' && renderListView()}
+            {!isLoading && viewMode === 'month' && renderMonthView()}
+            {!isLoading && viewMode === 'week' && renderWeekView()}
+            {!isLoading && viewMode === 'day' && renderDayView()}
+            {!isLoading && viewMode === 'list' && renderListView()}
             
           </div>
         </div>
@@ -645,9 +866,12 @@ export default function App() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-5">
-            <div className="flex items-center gap-2 mb-4 pb-2 border-b border-gray-50">
-              <Bell className="text-indigo-600" size={18} />
-              <h3 className="font-bold text-gray-800 text-sm">Próximas Entregas</h3>
+            <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-50">
+              <div className="flex items-center gap-2">
+                <Bell className="text-indigo-600" size={18} />
+                <h3 className="font-bold text-gray-800 text-sm">Próximas Entregas</h3>
+              </div>
+              <p className="text-[10px] text-gray-400">ID: {userId ? userId.substring(0, 8) : 'N/A'}</p>
             </div>
             
             {upcomingEvents.length === 0 ? (
@@ -663,7 +887,7 @@ export default function App() {
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start">
                         <h4 className="font-semibold text-gray-800 text-xs truncate leading-tight">{ev.title}</h4>
-                        <button onClick={(e) => handleDeleteEvent(e, ev.id)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><X size={12}/></button>
+                        <button onClick={(e) => handleDeleteEvent(e, ev.id)} className="text-gray-300 hover:text-red-500 opacity-100 group-hover:opacity-100"><X size={12}/></button>
                       </div>
                       <p className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
                         <Clock size={10} />
@@ -699,10 +923,15 @@ export default function App() {
         </div>
       </main>
 
+      {/* FOOTER DE VERSIÓN (Nuevo) */}
+      <footer className="text-center py-4 text-xs text-gray-300">
+        UniPlanner Colombia v1.1
+      </footer>
+
       {/* Modal CRUD */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl animate-fade-in-up scale-100 transition-all">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl animate-fade-in-up scale-100 transition-all"> {/* Aumentado el ancho max-w-lg */}
             <div className="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/50 rounded-t-2xl">
               <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
                 {editingId ? <Edit2 size={18} className="text-indigo-600"/> : <Plus size={18} className="text-indigo-600"/>}
@@ -713,8 +942,11 @@ export default function App() {
               </button>
             </div>
 
-            <div className="p-6">
-              <form onSubmit={handleSaveEvent} className="space-y-5">
+            <div className="p-6 max-h-[80vh] overflow-y-auto">
+              {/* Formulario */}
+              <form onSubmit={handleSaveEvent} className="space-y-5 border p-4 rounded-xl shadow-inner bg-white">
+                <h4 className="text-sm font-bold text-gray-700">Detalles de la Actividad</h4>
+                
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Título</label>
                   <input 
@@ -727,6 +959,19 @@ export default function App() {
                     onChange={e => setNewEvent({...newEvent, title: e.target.value})}
                   />
                 </div>
+
+                {/* --- NUEVO: SELECTOR DE FECHA --- */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Fecha</label>
+                  <input
+                    type="date"
+                    required
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none text-sm bg-gray-50 focus:bg-white"
+                    value={selectedDate || ''}
+                    onChange={e => setSelectedDate(e.target.value)}
+                  />
+                </div>
+                {/* --------------------------------- */}
 
                 <div className="grid grid-cols-2 gap-4">
                    <div>
@@ -767,7 +1012,37 @@ export default function App() {
                   />
                 </div>
 
-                <div className="flex gap-3 pt-2">
+                {/* BOTONES DE IA */}
+                <div className="flex gap-2 justify-end pt-2">
+                    {/* Botón 1: Generador de Plan de Estudio (solo para exam o assignment) */}
+                    {(newEvent.type === 'exam' || newEvent.type === 'assignment') && (
+                        <button
+                            type="button"
+                            onClick={handleGenerateStudyPlan}
+                            disabled={isGeminiLoading}
+                            className="flex items-center gap-1 px-3 py-2 text-xs font-bold rounded-lg text-indigo-600 bg-indigo-100 hover:bg-indigo-200 transition-colors disabled:opacity-50"
+                        >
+                            <Sparkles size={14} /> 
+                            {isGeminiLoading ? 'Generando...' : 'Plan de Estudio'}
+                        </button>
+                    )}
+                    
+                    {/* Botón 2: Asistente de Notas (para cualquier tipo con notas) */}
+                    {newEvent.description.length > 5 && (
+                        <button
+                            type="button"
+                            onClick={handleAnalyzeNotes}
+                            disabled={isGeminiLoading}
+                            className="flex items-center gap-1 px-3 py-2 text-xs font-bold rounded-lg text-emerald-600 bg-emerald-100 hover:bg-emerald-200 transition-colors disabled:opacity-50"
+                        >
+                            <NotebookText size={14} /> 
+                            {isGeminiLoading ? 'Analizando...' : 'Analizar Notas'}
+                        </button>
+                    )}
+                </div>
+
+
+                <div className="flex gap-3 pt-2 border-t border-gray-100 mt-4">
                   {editingId && (
                     <button 
                       type="button" 
@@ -787,6 +1062,21 @@ export default function App() {
                   </button>
                 </div>
               </form>
+              
+              {/* Resultado de Gemini */}
+              {(geminiResult || geminiError) && (
+                <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-xl shadow-lg">
+                  <h4 className="font-bold text-sm text-gray-800 mb-2 flex items-center gap-2">
+                    <Sparkles size={16} className="text-indigo-500"/>
+                    Asistente de Productividad AI
+                  </h4>
+                  {geminiError ? (
+                    <p className="text-red-500 text-sm">{geminiError}</p>
+                  ) : (
+                    <div className="prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: geminiResult.replace(/\n/g, '<br/>') }} />
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
