@@ -25,7 +25,7 @@ const COLOR_MAP = {
 // --- 1. PEGA AQUÍ TU CONFIGURACIÓN DE FIREBASE (Obtenida de la consola) ---
 // ==============================================================================
 const firebaseConfig = {
- apiKey: "AIzaSyB7HxzNKaNbspSm2bzFj9i-H8iGEsdSecw",
+   apiKey: "AIzaSyB7HxzNKaNbspSm2bzFj9i-H8iGEsdSecw",
   authDomain: "uniplanner-ed7cb.firebaseapp.com",
   projectId: "uniplanner-ed7cb",
   storageBucket: "uniplanner-ed7cb.firebasestorage.app",
@@ -35,10 +35,10 @@ const firebaseConfig = {
 };
 // ==============================================================================
 
-// Validar si el usuario ha configurado las llaves
+// --- VALIDACIÓN DE SEGURIDAD ---
 const isConfigured = firebaseConfig.apiKey !== "AIzaVy..." && firebaseConfig.projectId !== "tu-proyecto";
 
-// Inicializar Firebase solo si hay configuración válida
+// Inicializar Firebase SOLO si la configuración parece real
 let app, db, auth;
 if (isConfigured) {
     try {
@@ -46,9 +46,12 @@ if (isConfigured) {
         db = getFirestore(app);
         auth = getAuth(app);
     } catch (error) {
-        console.error("Error inicializando Firebase:", error);
+        console.error("Error crítico inicializando Firebase:", error);
     }
 }
+
+// Estado inicial vacío para el formulario
+const initialEventState = { title: '', type: 'lecture', time: '08:00', description: '' };
 
 export default function App() {
   // --- PANTALLA DE AYUDA (Si faltan las llaves) ---
@@ -66,16 +69,13 @@ export default function App() {
              </div>
           </div>
           <div className="p-8 text-center">
-             <p className="mb-4 text-lg">
-                La app no puede conectarse porque aún tiene las llaves de ejemplo.
-             </p>
+             <p className="mb-4 text-lg">La app no puede guardar datos porque usa llaves de ejemplo.</p>
              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-left mb-4">
                 <p className="font-bold text-indigo-600 mb-2">Instrucciones:</p>
                 <ol className="list-decimal list-inside space-y-2 text-sm text-slate-700">
-                    <li>Ve a <code>src/App.jsx</code> (este archivo).</li>
+                    <li>Ve a este archivo <code>src/App.jsx</code>.</li>
                     <li>Busca la línea 27 (<code>const firebaseConfig</code>).</li>
-                    <li>Borra el contenido de ejemplo y pega tus credenciales reales.</li>
-                    <li>Guarda el archivo.</li>
+                    <li>Pega tus credenciales reales de Firebase.</li>
                 </ol>
              </div>
           </div>
@@ -95,7 +95,7 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [userId, setUserId] = useState(null); 
   const [isLoading, setIsLoading] = useState(true); 
-  const [connectionError, setConnectionError] = useState(null); // Estado para errores de conexión
+  const [connectionError, setConnectionError] = useState(null);
 
   // Estados para Gemini API
   const [geminiResult, setGeminiResult] = useState(null);
@@ -103,27 +103,19 @@ export default function App() {
   const [geminiError, setGeminiError] = useState(null);
   const [showInAppAlert, setShowInAppAlert] = useState(null);
   
-  const [newEvent, setNewEvent] = useState({
-    title: '', type: 'lecture', time: '08:00', description: ''
-  });
+  const [newEvent, setNewEvent] = useState(initialEventState);
 
   // --- Gemini API Call Function ---
   const callGeminiApi = async (prompt, systemPrompt) => {
     setIsGeminiLoading(true);
     setGeminiResult(null);
     setGeminiError(null);
-    // API Key eliminada por seguridad en este ejemplo público
     alert("La función de IA requiere una API Key configurada en el código.");
     setIsGeminiLoading(false);
   };
 
-  const handleGenerateStudyPlan = async () => {
-    callGeminiApi();
-  };
-
-  const handleAnalyzeNotes = async () => {
-    callGeminiApi();
-  }
+  const handleGenerateStudyPlan = async () => callGeminiApi();
+  const handleAnalyzeNotes = async () => callGeminiApi();
 
 
   // --- 1. EFECTO DE AUTENTICACIÓN ---
@@ -132,7 +124,7 @@ export default function App() {
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
         if (user) {
-            console.log("Conectado como:", user.uid);
+            console.log("Conectado a Firebase como:", user.uid);
             setUserId(user.uid);
             setConnectionError(null);
             setIsLoading(false); 
@@ -201,13 +193,32 @@ export default function App() {
     return () => clearInterval(interval);
   }, [events, notifiedEvents]);
 
+  // --- FUNCIONES DE LIMPIEZA Y CIERRE ---
+  
+  const resetForm = () => {
+      setNewEvent(initialEventState); // Volver a poner todo en blanco
+      setEditingId(null);
+      setGeminiResult(null);
+      setGeminiError(null);
+  };
+
+  const closeModal = () => { 
+      setIsModalOpen(false); 
+      resetForm(); // Limpiar al cerrar
+  };
+
+  const openNewEventModal = (dateStr) => {
+      setSelectedDate(dateStr);
+      resetForm(); // Limpiar antes de abrir uno nuevo
+      setIsModalOpen(true);
+  };
+
   // --- LÓGICA CRUD ---
   const handleSaveEvent = async (e) => {
     e.preventDefault();
 
-    // --- DIAGNÓSTICO ---
     if (!userId) {
-        alert("⛔ ERROR DE CONEXIÓN:\n\nNo se puede guardar porque no hay conexión con la base de datos.\n\nPosible causa: No has habilitado la autenticación 'Anónima' en Firebase Console.");
+        alert("⛔ ERROR DE CONEXIÓN: No se puede guardar porque no hay usuario identificado. Revisa la consola de Firebase.");
         return;
     }
 
@@ -222,7 +233,8 @@ export default function App() {
             await addDoc(eventsRef, eventData);
             addNotification('Creado exitosamente');
         }
-        closeModal();
+        // CERRAR AUTOMÁTICAMENTE AL GUARDAR
+        closeModal(); 
     } catch (error) {
         console.error("Error al guardar:", error);
         alert(`Error al guardar en la nube: ${error.message}`);
@@ -272,7 +284,6 @@ export default function App() {
       setNotifications(prev => [...prev, { id, message: msg }]);
       setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
   };
-  const closeModal = () => { setIsModalOpen(false); setEditingId(null); setGeminiResult(null); };
 
   // --- RENDER ---
 
@@ -284,14 +295,6 @@ export default function App() {
                   <WifiOff size={48} className="mx-auto text-red-500 mb-4"/>
                   <h2 className="text-xl font-bold text-red-700 mb-2">Problema de Conexión con Firebase</h2>
                   <p className="text-gray-700 mb-4">{connectionError}</p>
-                  <div className="bg-gray-100 p-4 rounded-lg text-sm text-left border border-gray-200">
-                      <strong>Solución sugerida:</strong>
-                      <ul className="list-disc list-inside ml-2 mt-1 space-y-1">
-                          <li>Ve a <b>Firebase Console</b> &gt; <b>Authentication</b>.</li>
-                          <li>Entra a la pestaña <b>Sign-in method</b>.</li>
-                          <li>Asegúrate de que el proveedor <b>Anónimo</b> esté habilitado.</li>
-                      </ul>
-                  </div>
                   <button onClick={() => window.location.reload()} className="mt-6 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 font-bold transition-colors shadow-lg">
                     Reintentar Conexión
                   </button>
@@ -309,7 +312,7 @@ export default function App() {
                 <div className="bg-indigo-600 p-2 rounded-lg text-white"><GraduationCap size={20} /></div>
                 <h1 className="text-xl font-extrabold text-gray-900 tracking-tight">UniPlanner <span className="text-indigo-600">.</span></h1>
             </div>
-            <button onClick={() => { setSelectedDate(new Date().toISOString().split('T')[0]); setIsModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition-all flex items-center gap-2">
+            <button onClick={() => openNewEventModal(new Date().toISOString().split('T')[0])} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition-all flex items-center gap-2">
                 <Plus size={18}/> <span>Nueva</span>
             </button>
         </div>
@@ -345,7 +348,7 @@ export default function App() {
                     const isToday = d === formatDateStr(new Date());
                     
                     return (
-                        <div key={day} onClick={() => { setSelectedDate(d); setIsModalOpen(true); }} 
+                        <div key={day} onClick={() => openNewEventModal(d)} 
                              onDragOver={(e) => {e.preventDefault(); e.dataTransfer.dropEffect = "move";}}
                              onDrop={(e) => handleDrop(e, d)}
                              className={`min-h-[100px] border rounded-xl p-2 cursor-pointer transition-all hover:shadow-md group relative
@@ -368,7 +371,7 @@ export default function App() {
                             </div>
                             <button 
                                 className="absolute top-2 right-2 text-indigo-400 opacity-0 group-hover:opacity-100 hover:text-indigo-600 transition-opacity"
-                                onClick={(e) => { e.stopPropagation(); setSelectedDate(d); setIsModalOpen(true); }}
+                                onClick={(e) => { e.stopPropagation(); openNewEventModal(d); }}
                             >
                                 <Plus size={16}/>
                             </button>
