@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, Plus, ChevronLeft, ChevronRight, Clock, 
   GraduationCap, Trash2, X, CheckCircle, Bell, Edit2, LayoutList, 
-  LayoutGrid, Columns, CalendarDays, Menu, Sparkles, NotebookText, AlertTriangle
+  LayoutGrid, Columns, CalendarDays, Menu, Sparkles, NotebookText, AlertTriangle, Key, WifiOff
 } from 'lucide-react';
 
 // --- IMPORTS DE FIREBASE ---
@@ -25,7 +25,7 @@ const COLOR_MAP = {
 // --- 1. PEGA AQUÍ TU CONFIGURACIÓN DE FIREBASE (Obtenida de la consola) ---
 // ==============================================================================
 const firebaseConfig = {
-   apiKey: "AIzaSyB7HxzNKaNbspSm2bzFj9i-H8iGEsdSecw",
+ apiKey: "AIzaSyB7HxzNKaNbspSm2bzFj9i-H8iGEsdSecw",
   authDomain: "uniplanner-ed7cb.firebaseapp.com",
   projectId: "uniplanner-ed7cb",
   storageBucket: "uniplanner-ed7cb.firebasestorage.app",
@@ -51,35 +51,32 @@ if (isConfigured) {
 }
 
 export default function App() {
-  // --- Si no está configurado, mostrar pantalla de ayuda ---
+  // --- PANTALLA DE AYUDA (Si faltan las llaves) ---
   if (!isConfigured) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-        <div className="bg-white max-w-2xl w-full rounded-2xl shadow-2xl border border-yellow-200 overflow-hidden">
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-white">
+        <div className="bg-white text-slate-900 max-w-2xl w-full rounded-2xl shadow-2xl overflow-hidden animate-bounce-in">
           <div className="bg-yellow-400 p-6 flex items-center gap-4">
              <div className="bg-white p-3 rounded-full shadow-sm">
-                <AlertTriangle size={32} className="text-yellow-600" />
+                <Key size={40} className="text-yellow-600" />
              </div>
              <div>
-                <h1 className="text-2xl font-extrabold text-yellow-900">¡Casi listo! Falta Configuración</h1>
-                <p className="text-yellow-800 font-medium">Necesitas conectar tu base de datos Firebase.</p>
+                <h1 className="text-2xl font-extrabold text-yellow-900">Falta Configuración</h1>
+                <p className="text-yellow-900 font-bold">Necesitas pegar tus llaves de Firebase en el código.</p>
              </div>
           </div>
-          
-          <div className="p-8 space-y-6">
-             <div className="space-y-4 text-gray-600">
-                <p>El error <code>auth/api-key-not-valid</code> ocurre porque el código aún tiene las credenciales de ejemplo.</p>
-                
-                <div className="bg-gray-100 p-4 rounded-xl border border-gray-200">
-                   <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2">Pasos para solucionar:</h3>
-                   <ol className="list-decimal list-inside space-y-2 text-sm">
-                      <li>Ve a <a href="https://console.firebase.google.com/" target="_blank" className="text-indigo-600 font-bold hover:underline">console.firebase.google.com</a></li>
-                      <li>Entra a tu proyecto (o crea uno nuevo).</li>
-                      <li>Clic en el engranaje ⚙️ (Configuración del proyecto).</li>
-                      <li>Baja hasta "Tus apps" y copia el bloque <code>const firebaseConfig = ...</code>.</li>
-                      <li>Vuelve a este archivo (<code>App.jsx</code>) y reemplaza las líneas 27-34.</li>
-                   </ol>
-                </div>
+          <div className="p-8 text-center">
+             <p className="mb-4 text-lg">
+                La app no puede conectarse porque aún tiene las llaves de ejemplo.
+             </p>
+             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-left mb-4">
+                <p className="font-bold text-indigo-600 mb-2">Instrucciones:</p>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-slate-700">
+                    <li>Ve a <code>src/App.jsx</code> (este archivo).</li>
+                    <li>Busca la línea 27 (<code>const firebaseConfig</code>).</li>
+                    <li>Borra el contenido de ejemplo y pega tus credenciales reales.</li>
+                    <li>Guarda el archivo.</li>
+                </ol>
              </div>
           </div>
         </div>
@@ -89,7 +86,6 @@ export default function App() {
 
   // --- Estados ---
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState('month'); 
   const [events, setEvents] = useState([]); 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
@@ -99,6 +95,7 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [userId, setUserId] = useState(null); 
   const [isLoading, setIsLoading] = useState(true); 
+  const [connectionError, setConnectionError] = useState(null); // Estado para errores de conexión
 
   // Estados para Gemini API
   const [geminiResult, setGeminiResult] = useState(null);
@@ -111,77 +108,53 @@ export default function App() {
   });
 
   // --- Gemini API Call Function ---
-  const callGeminiApi = async (prompt, systemPrompt, tool = false) => {
+  const callGeminiApi = async (prompt, systemPrompt) => {
     setIsGeminiLoading(true);
     setGeminiResult(null);
     setGeminiError(null);
-    const apiKey = ""; 
-
-    if (!apiKey) {
-       setGeminiError("Para usar IA, configura la API Key en el código.");
-       setIsGeminiLoading(false);
-       return;
-    }
-
-    const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      tools: tool ? [{ "google_search": {} }] : undefined,
-    };
-    
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-    
-    try {
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
-        const result = data.candidates?.[0]?.content?.parts?.[0]?.text || "No se pudo generar una respuesta.";
-        setGeminiResult(result);
-    } catch (error) {
-        console.error("Gemini Error:", error);
-        setGeminiError("Error al conectar con la IA.");
-    } finally {
-        setIsGeminiLoading(false);
-    }
+    // API Key eliminada por seguridad en este ejemplo público
+    alert("La función de IA requiere una API Key configurada en el código.");
+    setIsGeminiLoading(false);
   };
 
   const handleGenerateStudyPlan = async () => {
-    const prompt = `Plan de estudio para: ${newEvent.title} (${newEvent.type}). Fecha: ${selectedDate}. Notas: ${newEvent.description || 'Ninguna'}. Responde en español, markdown, breve.`;
-    const systemPrompt = "Eres un tutor académico experto.";
-    await callGeminiApi(prompt, systemPrompt, false);
+    callGeminiApi();
   };
 
   const handleAnalyzeNotes = async () => {
-    const prompt = `Analiza: "${newEvent.description}". Resumen breve y conceptos clave.`;
-    const systemPrompt = "Eres un asistente de análisis. Responde en español.";
-    await callGeminiApi(prompt, systemPrompt, true);
+    callGeminiApi();
   }
 
 
-  // --- 1. EFECTO DE AUTENTICACIÓN Y CONEXIÓN INICIAL ---
+  // --- 1. EFECTO DE AUTENTICACIÓN ---
   useEffect(() => {
     if (!auth) return;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
         if (user) {
+            console.log("Conectado como:", user.uid);
             setUserId(user.uid);
+            setConnectionError(null);
             setIsLoading(false); 
         } else {
-            signInAnonymously(auth).catch((error) => {
-                console.error("Error login anónimo:", error);
-                setIsLoading(false); 
-            });
+            console.log("Intentando login anónimo...");
+            signInAnonymously(auth)
+                .catch((error) => {
+                    console.error("Error Auth:", error);
+                    if (error.code === 'auth/operation-not-allowed') {
+                        setConnectionError("Debes habilitar el proveedor 'Anónimo' en la consola de Firebase (Authentication > Sign-in method).");
+                    } else {
+                        setConnectionError(`Error de conexión: ${error.code}`);
+                    }
+                    setIsLoading(false); 
+                });
         }
     });
 
     return () => unsubscribeAuth();
   }, []);
 
-  // --- 2. EFECTO DE LECTURA DE DATOS (onSnapshot) ---
+  // --- 2. EFECTO DE LECTURA DE DATOS ---
   useEffect(() => {
     if (!db || !userId) return; 
 
@@ -229,37 +202,37 @@ export default function App() {
   }, [events, notifiedEvents]);
 
   // --- LÓGICA CRUD ---
-  const getEventsCollectionRef = () => {
-    if (!db || !userId) return null;
-    return collection(db, 'users', userId, 'events');
-  };
-
   const handleSaveEvent = async (e) => {
     e.preventDefault();
-    const eventsRef = getEventsCollectionRef();
-    if (!eventsRef) return;
+
+    // --- DIAGNÓSTICO ---
+    if (!userId) {
+        alert("⛔ ERROR DE CONEXIÓN:\n\nNo se puede guardar porque no hay conexión con la base de datos.\n\nPosible causa: No has habilitado la autenticación 'Anónima' en Firebase Console.");
+        return;
+    }
+
+    const eventsRef = collection(db, 'users', userId, 'events');
     const eventData = { ...newEvent, date: selectedDate };
+
     try {
         if (editingId) {
             await updateDoc(doc(eventsRef, editingId), eventData);
-            addNotification('Actualizado');
+            addNotification('Actualizado correctamente');
         } else {
             await addDoc(eventsRef, eventData);
-            addNotification('Creado');
+            addNotification('Creado exitosamente');
         }
-    } catch (error) {
-        console.error("Error guardar:", error);
-        addNotification('Error al guardar');
-    } finally {
         closeModal();
+    } catch (error) {
+        console.error("Error al guardar:", error);
+        alert(`Error al guardar en la nube: ${error.message}`);
     }
   };
 
   const handleDeleteEvent = async (e, id) => {
     if (e) e.stopPropagation();
     if (!window.confirm('¿Eliminar?')) return;
-    const eventsRef = getEventsCollectionRef();
-    if (!eventsRef) return;
+    const eventsRef = collection(db, 'users', userId, 'events');
     try {
         await deleteDoc(doc(eventsRef, id));
         addNotification('Eliminado');
@@ -272,8 +245,7 @@ export default function App() {
   const handleDrop = async (e, targetDate) => {
     e.preventDefault();
     if (!draggedEvent) return;
-    const eventsRef = getEventsCollectionRef();
-    if (!eventsRef) return;
+    const eventsRef = collection(db, 'users', userId, 'events');
     try {
         await updateDoc(doc(eventsRef, draggedEvent.id), { date: targetDate });
         addNotification(`Movido al ${targetDate}`);
@@ -295,170 +267,204 @@ export default function App() {
     const c = COLOR_MAP[type] || COLOR_MAP.lecture;
     return isSolid ? c.solid : c.bg;
   };
-
-  // --- Render Views ---
-  const EventCard = ({ event, showTime = false }) => (
-    <div 
-      draggable
-      onDragStart={(e) => { setDraggedEvent(event); e.dataTransfer.effectAllowed = "move"; }}
-      onDoubleClick={(e) => { e.stopPropagation(); setEditingId(event.id); setSelectedDate(event.date); setNewEvent({...event}); setIsModalOpen(true); }}
-      className={`text-[10px] sm:text-xs px-2 py-1.5 mb-1 rounded cursor-grab shadow-sm border flex justify-between group/item ${getTypeColor(event.type)}`}
-    >
-      <div className="flex flex-col min-w-0 flex-1">
-         {showTime && <span className="opacity-70 mb-0.5">{event.time}</span>}
-         <span className="truncate font-medium">{event.title}</span>
-      </div>
-      <button onClick={(e) => handleDeleteEvent(e, event.id)} className="lg:opacity-0 lg:group-hover/item:opacity-100 ml-1 text-red-600"><X size={14}/></button>
-    </div>
-  );
-
-  const renderMonthView = () => {
-    const { days, firstDay } = getDaysInMonth(currentDate);
-    return (
-      <div className="p-4 grid grid-cols-7 gap-2">
-        {["D","L","M","X","J","V","S"].map(d => <div key={d} className="text-center text-xs text-gray-400 font-bold py-2">{d}</div>)}
-        {[...Array(firstDay).keys()].map(i => <div key={`empty-${i}`} />)}
-        {[...Array(days).keys()].map(i => {
-            const day = i + 1;
-            const dateStr = createDateFromDay(currentDate.getFullYear(), currentDate.getMonth(), day);
-            const dayEvents = events.filter(e => e.date === dateStr);
-            const isToday = formatDateStr(new Date()) === dateStr;
-            return (
-              <div key={day} 
-                onDragOver={(e) => {e.preventDefault(); e.dataTransfer.dropEffect = "move";}}
-                onDrop={(e) => handleDrop(e, dateStr)}
-                onClick={() => { setSelectedDate(dateStr); setNewEvent({...newEvent, title: '', description: ''}); setIsModalOpen(true); }}
-                className={`min-h-[80px] p-2 rounded-xl border transition-all hover:bg-gray-50 cursor-pointer ${isToday ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'}`}
-              >
-                <span className={`text-sm font-bold w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-indigo-600 text-white' : 'text-gray-700'}`}>{day}</span>
-                <div className="mt-1 space-y-1">{dayEvents.slice(0,3).map(ev => <EventCard key={ev.id} event={ev} />)}</div>
-              </div>
-            );
-        })}
-      </div>
-    );
-  };
-
   const addNotification = (msg) => {
-    const id = Date.now();
-    setNotifications(prev => [...prev, { id, message: msg }]);
-    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
+      const id = Date.now();
+      setNotifications(prev => [...prev, { id, message: msg }]);
+      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
   };
-
   const closeModal = () => { setIsModalOpen(false); setEditingId(null); setGeminiResult(null); };
+
+  // --- RENDER ---
+
+  // Pantalla de Error de Conexión
+  if (connectionError) {
+      return (
+          <div className="min-h-screen flex items-center justify-center bg-red-50 p-4 font-sans">
+              <div className="bg-white p-6 rounded-xl shadow-xl max-w-lg border border-red-200 text-center animate-bounce-in">
+                  <WifiOff size={48} className="mx-auto text-red-500 mb-4"/>
+                  <h2 className="text-xl font-bold text-red-700 mb-2">Problema de Conexión con Firebase</h2>
+                  <p className="text-gray-700 mb-4">{connectionError}</p>
+                  <div className="bg-gray-100 p-4 rounded-lg text-sm text-left border border-gray-200">
+                      <strong>Solución sugerida:</strong>
+                      <ul className="list-disc list-inside ml-2 mt-1 space-y-1">
+                          <li>Ve a <b>Firebase Console</b> &gt; <b>Authentication</b>.</li>
+                          <li>Entra a la pestaña <b>Sign-in method</b>.</li>
+                          <li>Asegúrate de que el proveedor <b>Anónimo</b> esté habilitado.</li>
+                      </ul>
+                  </div>
+                  <button onClick={() => window.location.reload()} className="mt-6 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 font-bold transition-colors shadow-lg">
+                    Reintentar Conexión
+                  </button>
+              </div>
+          </div>
+      );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 text-slate-800 font-sans pb-8">
-      {isLoading && (
-        <div className="fixed inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center z-50">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-            <p className="text-indigo-600 font-bold text-lg">Conectando a tu UniPlanner...</p>
-            <p className="text-xs text-gray-400 mt-2">Configurando base de datos personal</p>
-        </div>
-      )}
-
-      {/* Alerta In-App */}
-      {showInAppAlert && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 p-4 w-full max-w-sm animate-bounce-in">
-            <div className="bg-red-500 text-white rounded-xl shadow-2xl p-4 flex justify-between">
-                <div><p className="font-bold">¡Recordatorio!</p><p className="text-xs">{showInAppAlert.title} a las {showInAppAlert.time}</p></div>
-                <button onClick={() => setShowInAppAlert(null)}><X/></button>
-            </div>
-        </div>
-      )}
-
-      {/* Toasts */}
-      <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
-        {notifications.map(n => (
-          <div key={n.id} className="bg-gray-800 text-white px-4 py-3 rounded-xl shadow-lg flex items-center gap-3 animate-fade-in pointer-events-auto">
-            <Bell size={16} className="text-yellow-400" /> <span className="text-xs font-medium">{n.message}</span>
-          </div>
-        ))}
-      </div>
-
+      {/* ... HEADER ... */}
       <header className="bg-white shadow-sm sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
             <div className="flex items-center gap-3">
                 <div className="bg-indigo-600 p-2 rounded-lg text-white"><GraduationCap size={20} /></div>
                 <h1 className="text-xl font-extrabold text-gray-900 tracking-tight">UniPlanner <span className="text-indigo-600">.</span></h1>
             </div>
-            <button onClick={() => { setSelectedDate(formatDateStr(new Date())); setIsModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition-all flex items-center gap-2">
+            <button onClick={() => { setSelectedDate(new Date().toISOString().split('T')[0]); setIsModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition-all flex items-center gap-2">
                 <Plus size={18}/> <span>Nueva</span>
             </button>
         </div>
       </header>
 
+      {/* ... MAIN CALENDAR ... */}
       <main className="max-w-7xl mx-auto px-4 py-6">
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden min-h-[600px]">
-            <div className="flex justify-between items-center p-6 border-b border-gray-100">
-                <h2 className="text-2xl font-bold text-gray-800 capitalize flex gap-2 items-center">
-                    <span className="text-gray-400 font-light">{currentDate.getFullYear()}</span>
-                    {currentDate.toLocaleDateString('es-ES', { month: 'long' })}
+         <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6 min-h-[500px]">
+            <div className="flex justify-between mb-4 items-center">
+                <h2 className="text-2xl font-bold capitalize flex items-center gap-2">
+                    <CalendarIcon className="text-indigo-500" size={24}/>
+                    {currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric'})}
                 </h2>
-                <div className="flex gap-1">
-                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))} className="p-2 hover:bg-gray-100 rounded-lg"><ChevronLeft/></button>
-                    <button onClick={() => setCurrentDate(new Date())} className="px-3 text-sm font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg">Hoy</button>
-                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))} className="p-2 hover:bg-gray-100 rounded-lg"><ChevronRight/></button>
+                <div className="flex gap-2 bg-gray-50 p-1 rounded-lg">
+                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1)))} className="p-2 hover:bg-white hover:shadow-sm rounded-md transition-all"><ChevronLeft size={20}/></button>
+                    <button onClick={() => setCurrentDate(new Date())} className="px-3 text-xs font-bold text-indigo-600 hover:bg-white hover:shadow-sm rounded-md transition-all">Hoy</button>
+                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1)))} className="p-2 hover:bg-white hover:shadow-sm rounded-md transition-all"><ChevronRight size={20}/></button>
                 </div>
             </div>
-            {renderMonthView()}
-        </div>
+            
+            <div className="grid grid-cols-7 gap-2 mb-2">
+                 {["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"].map(day => (
+                     <div key={day} className="text-center text-xs font-bold text-gray-400 uppercase tracking-wider">{day}</div>
+                 ))}
+            </div>
+
+            <div className="grid grid-cols-7 gap-2">
+                {[...Array(getDaysInMonth(currentDate).firstDay).keys()].map(i => <div key={`e-${i}`} className="bg-gray-50/30 rounded-lg"/>)}
+                {[...Array(getDaysInMonth(currentDate).days).keys()].map(i => {
+                    const day = i + 1;
+                    const d = createDateFromDay(currentDate.getFullYear(), currentDate.getMonth(), day);
+                    const dayEvents = events.filter(e => e.date === d);
+                    const isToday = d === formatDateStr(new Date());
+                    
+                    return (
+                        <div key={day} onClick={() => { setSelectedDate(d); setIsModalOpen(true); }} 
+                             onDragOver={(e) => {e.preventDefault(); e.dataTransfer.dropEffect = "move";}}
+                             onDrop={(e) => handleDrop(e, d)}
+                             className={`min-h-[100px] border rounded-xl p-2 cursor-pointer transition-all hover:shadow-md group relative
+                                ${isToday ? 'border-indigo-300 bg-indigo-50/50' : 'border-gray-100 hover:border-indigo-200 bg-white'}`}>
+                            <span className={`flex items-center justify-center w-7 h-7 rounded-full text-sm font-bold mb-1
+                                ${isToday ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 group-hover:bg-gray-100'}`}>
+                                {day}
+                            </span>
+                            <div className="space-y-1 overflow-y-auto max-h-[70px]">
+                                {dayEvents.map(e => (
+                                    <div 
+                                        key={e.id} 
+                                        draggable
+                                        onDragStart={(ev) => { setDraggedEvent(e); ev.dataTransfer.effectAllowed = "move"; }}
+                                        onClick={(ev) => { ev.stopPropagation(); setEditingId(e.id); setSelectedDate(e.date); setNewEvent({...e}); setIsModalOpen(true); }}
+                                        className={`text-[10px] px-1.5 py-1 rounded border truncate shadow-sm hover:scale-105 transition-transform cursor-grab active:cursor-grabbing ${getTypeColor(e.type)}`}>
+                                        {e.title}
+                                    </div>
+                                ))}
+                            </div>
+                            <button 
+                                className="absolute top-2 right-2 text-indigo-400 opacity-0 group-hover:opacity-100 hover:text-indigo-600 transition-opacity"
+                                onClick={(e) => { e.stopPropagation(); setSelectedDate(d); setIsModalOpen(true); }}
+                            >
+                                <Plus size={16}/>
+                            </button>
+                        </div>
+                    );
+                })}
+            </div>
+         </div>
       </main>
 
-      {/* Modal CRUD */}
+      {/* ... TOASTS ... */}
+      <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
+        {notifications.map(n => (
+          <div key={n.id} className="bg-gray-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in-up pointer-events-auto border border-gray-700">
+            <Bell size={18} className="text-yellow-400" /> <span className="text-xs font-bold">{n.message}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ... MODAL ... */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl animate-fade-in-up">
-            <div className="flex justify-between p-5 border-b border-gray-100">
-              <h3 className="font-bold text-lg text-gray-800">{editingId ? 'Editar' : 'Nueva'} Actividad</h3>
-              <button onClick={closeModal}><X className="text-gray-400 hover:text-gray-600"/></button>
-            </div>
-            <div className="p-6 overflow-y-auto max-h-[80vh]">
-              <form onSubmit={handleSaveEvent} className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold text-gray-500 uppercase">Título</label>
-                  <input autoFocus required type="text" className="w-full px-4 py-2 rounded-xl border bg-gray-50 focus:bg-white focus:ring-2 ring-indigo-100 outline-none transition-all" value={newEvent.title} onChange={e => setNewEvent({...newEvent, title: e.target.value})} placeholder="Ej. Parcial Cálculo" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                   <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase">Fecha</label>
-                    <input required type="date" className="w-full px-4 py-2 rounded-xl border bg-gray-50 outline-none" value={selectedDate || ''} onChange={e => setSelectedDate(e.target.value)} />
-                   </div>
-                   <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase">Hora</label>
-                    <input required type="time" className="w-full px-4 py-2 rounded-xl border bg-gray-50 outline-none" value={newEvent.time} onChange={e => setNewEvent({...newEvent, time: e.target.value})} />
-                   </div>
-                </div>
-                <div>
-                    <label className="text-xs font-bold text-gray-500 uppercase">Tipo</label>
-                    <div className="flex gap-2 mt-1">
-                        {['lecture','exam','assignment','study'].map(type => (
-                            <button key={type} type="button" onClick={() => setNewEvent({...newEvent, type})} className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-all ${newEvent.type === type ? getTypeColor(type, true) + ' text-white border-transparent' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>
-                                {type === 'lecture' ? 'Clase' : type === 'exam' ? 'Examen' : type === 'assignment' ? 'Tarea' : 'Estudio'}
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl animate-fade-in-up transform transition-all scale-100">
+              <div className="flex justify-between items-center p-5 border-b border-gray-100">
+                  <h3 className="font-extrabold text-xl text-gray-800 flex items-center gap-2">
+                    {editingId ? <Edit2 size={20} className="text-indigo-600"/> : <Plus size={20} className="text-indigo-600"/>}
+                    {editingId ? 'Editar Actividad' : 'Nueva Actividad'}
+                  </h3>
+                  <button onClick={closeModal} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors"><X size={20}/></button>
+              </div>
+              <form onSubmit={handleSaveEvent} className="p-6 space-y-5">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Título</label>
+                    <input required autoFocus type="text" placeholder="Ej. Parcial de Cálculo" className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-medium" value={newEvent.title} onChange={e => setNewEvent({...newEvent, title: e.target.value})} />
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Fecha</label>
+                        <input required type="date" className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" value={selectedDate || ''} onChange={e => setSelectedDate(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Hora</label>
+                        <input required type="time" className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" value={newEvent.time} onChange={e => setNewEvent({...newEvent, time: e.target.value})} />
+                      </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Categoría</label>
+                    <div className="grid grid-cols-4 gap-2">
+                        {[
+                            {id:'lecture', label:'Clase', icon:'📘'},
+                            {id:'exam', label:'Examen', icon:'📕'},
+                            {id:'assignment', label:'Entrega', icon:'📙'},
+                            {id:'study', label:'Estudio', icon:'📗'}
+                        ].map(cat => (
+                            <button 
+                                key={cat.id}
+                                type="button" 
+                                onClick={() => setNewEvent({...newEvent, type: cat.id})} 
+                                className={`py-2 rounded-lg text-xs font-bold border transition-all flex flex-col items-center gap-1
+                                ${newEvent.type === cat.id 
+                                    ? getTypeColor(cat.id, true) + ' text-white border-transparent shadow-md scale-105' 
+                                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                <span className="text-sm">{cat.icon}</span>
+                                {cat.label}
                             </button>
                         ))}
                     </div>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-gray-500 uppercase">Notas</label>
-                  <textarea className="w-full px-4 py-2 rounded-xl border bg-gray-50 focus:bg-white outline-none h-20 resize-none" value={newEvent.description} onChange={e => setNewEvent({...newEvent, description: e.target.value})} placeholder="Detalles..."></textarea>
-                </div>
-                
-                {/* Botones IA (Opcional) */}
-                {(newEvent.type === 'exam' || newEvent.type === 'assignment') && (
-                    <button type="button" onClick={handleGenerateStudyPlan} disabled={isGeminiLoading} className="w-full py-2 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100 flex justify-center items-center gap-2">
-                        <Sparkles size={14}/> {isGeminiLoading ? 'Pensando...' : 'Generar Plan de Estudio con IA'}
-                    </button>
-                )}
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Notas</label>
+                    <textarea placeholder="Detalles adicionales..." className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none h-24 resize-none" value={newEvent.description} onChange={e => setNewEvent({...newEvent, description: e.target.value})}></textarea>
+                  </div>
+                  
+                  {/* Botones IA (Placeholder) */}
+                  <div className="flex gap-2">
+                      <button type="button" onClick={handleGenerateStudyPlan} disabled={isGeminiLoading} className="flex-1 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100 flex justify-center items-center gap-2 transition-colors">
+                          <Sparkles size={14}/> Generar Plan
+                      </button>
+                      <button type="button" onClick={handleAnalyzeNotes} disabled={isGeminiLoading} className="flex-1 py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold hover:bg-emerald-100 flex justify-center items-center gap-2 transition-colors">
+                          <NotebookText size={14}/> Analizar Notas
+                      </button>
+                  </div>
 
-                {geminiResult && <div className="p-3 bg-indigo-50 rounded-xl text-sm text-gray-700 border border-indigo-100 mt-2">{geminiResult}</div>}
-                {geminiError && <div className="p-2 text-red-500 text-xs text-center">{geminiError}</div>}
-
-                <button type="submit" className="w-full py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-black shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5">
-                    {editingId ? 'Guardar Cambios' : 'Crear Actividad'}
-                </button>
+                  <div className="flex gap-3 pt-2">
+                      {editingId && (
+                          <button type="button" onClick={handleDeleteEvent} className="px-4 py-3 rounded-xl bg-red-50 text-red-600 font-bold hover:bg-red-100 transition-colors"><Trash2 size={20}/></button>
+                      )}
+                      <button type="submit" className="flex-1 bg-gray-900 text-white font-bold py-3 rounded-xl hover:bg-black shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex justify-center items-center gap-2">
+                          <CheckCircle size={18}/>
+                          {editingId ? 'Guardar Cambios' : 'Crear Actividad'}
+                      </button>
+                  </div>
               </form>
-            </div>
           </div>
         </div>
       )}
