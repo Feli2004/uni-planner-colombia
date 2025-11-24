@@ -35,10 +35,10 @@ const firebaseConfig = {
 };
 // ==============================================================================
 
-// --- VALIDACIÓN DE SEGURIDAD ---
+// Validar si el usuario ha configurado las llaves
 const isConfigured = firebaseConfig.apiKey !== "AIzaVy..." && firebaseConfig.projectId !== "tu-proyecto";
 
-// Inicializar Firebase SOLO si la configuración parece real
+// Inicializar Firebase solo si hay configuración válida
 let app, db, auth;
 if (isConfigured) {
     try {
@@ -46,7 +46,7 @@ if (isConfigured) {
         db = getFirestore(app);
         auth = getAuth(app);
     } catch (error) {
-        console.error("Error crítico inicializando Firebase:", error);
+        console.error("Error inicializando Firebase:", error);
     }
 }
 
@@ -76,6 +76,7 @@ export default function App() {
                     <li>Ve a este archivo <code>src/App.jsx</code>.</li>
                     <li>Busca la línea 27 (<code>const firebaseConfig</code>).</li>
                     <li>Pega tus credenciales reales de Firebase.</li>
+                    <li>Guarda el archivo.</li>
                 </ol>
              </div>
           </div>
