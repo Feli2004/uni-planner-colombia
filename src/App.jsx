@@ -1,16 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, Plus, ChevronLeft, ChevronRight, Clock, 
-  GraduationCap, Trash2, X, CheckCircle, Bell, Edit2, LayoutList, 
-  LayoutGrid, Columns, CalendarDays, Menu, Sparkles, NotebookText, AlertTriangle, Key, WifiOff
+  GraduationCap, Trash2, X, CheckCircle, Bell, Edit2, Sparkles, 
+  NotebookText, AlertTriangle, Key, WifiOff, LogOut, User
 } from 'lucide-react';
 
 // --- IMPORTS DE FIREBASE ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getAuth, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut, 
+  onAuthStateChanged 
+} from 'firebase/auth';
 import { 
   getFirestore, doc, addDoc, updateDoc, deleteDoc, onSnapshot, 
-  collection, query, where, orderBy 
+  collection, query, orderBy 
 } from 'firebase/firestore';
 
 // --- MAPA ESTÁTICO DE COLORES ---
@@ -35,57 +41,45 @@ const firebaseConfig = {
 };
 // ==============================================================================
 
-// Validar si el usuario ha configurado las llaves
+// Validar configuración
 const isConfigured = firebaseConfig.apiKey !== "AIzaVy..." && firebaseConfig.projectId !== "tu-proyecto";
 
-// Inicializar Firebase solo si hay configuración válida
-let app, db, auth;
+// Inicializar Firebase
+let app, db, auth, provider;
 if (isConfigured) {
     try {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
+        provider = new GoogleAuthProvider();
     } catch (error) {
         console.error("Error inicializando Firebase:", error);
     }
 }
 
-// Estado inicial vacío para el formulario
+// Estado inicial del formulario
 const initialEventState = { title: '', type: 'lecture', time: '08:00', description: '' };
 
 export default function App() {
-  // --- PANTALLA DE AYUDA (Si faltan las llaves) ---
+  // --- PANTALLA DE CONFIGURACIÓN FALTANTE ---
   if (!isConfigured) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-white">
-        <div className="bg-white text-slate-900 max-w-2xl w-full rounded-2xl shadow-2xl overflow-hidden animate-bounce-in">
-          <div className="bg-yellow-400 p-6 flex items-center gap-4">
-             <div className="bg-white p-3 rounded-full shadow-sm">
+        <div className="bg-white text-slate-900 max-w-xl w-full rounded-2xl shadow-2xl p-8 text-center">
+            <div className="bg-yellow-100 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6">
                 <Key size={40} className="text-yellow-600" />
-             </div>
-             <div>
-                <h1 className="text-2xl font-extrabold text-yellow-900">Falta Configuración</h1>
-                <p className="text-yellow-900 font-bold">Necesitas pegar tus llaves de Firebase en el código.</p>
-             </div>
-          </div>
-          <div className="p-8 text-center">
-             <p className="mb-4 text-lg">La app no puede guardar datos porque usa llaves de ejemplo.</p>
-             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-left mb-4">
-                <p className="font-bold text-indigo-600 mb-2">Instrucciones:</p>
-                <ol className="list-decimal list-inside space-y-2 text-sm text-slate-700">
-                    <li>Ve a este archivo <code>src/App.jsx</code>.</li>
-                    <li>Busca la línea 27 (<code>const firebaseConfig</code>).</li>
-                    <li>Pega tus credenciales reales de Firebase.</li>
-                    <li>Guarda el archivo.</li>
-                </ol>
-             </div>
-          </div>
+            </div>
+            <h1 className="text-3xl font-extrabold text-slate-800 mb-2">Falta Configuración</h1>
+            <p className="text-slate-600 mb-6">Pega tus llaves de Firebase en <code>src/App.jsx</code> para continuar.</p>
         </div>
       </div>
     );
   }
 
   // --- Estados ---
+  const [user, setUser] = useState(null); // Usuario logueado
+  const [authLoading, setAuthLoading] = useState(true); // Cargando auth
+  
   const [currentDate, setCurrentDate] = useState(new Date());
   const [events, setEvents] = useState([]); 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -94,11 +88,8 @@ export default function App() {
   const [notifiedEvents, setNotifiedEvents] = useState(new Set());
   const [draggedEvent, setDraggedEvent] = useState(null);
   const [editingId, setEditingId] = useState(null);
-  const [userId, setUserId] = useState(null); 
-  const [isLoading, setIsLoading] = useState(true); 
-  const [connectionError, setConnectionError] = useState(null);
-
-  // Estados para Gemini API
+  
+  // Gemini States
   const [geminiResult, setGeminiResult] = useState(null);
   const [isGeminiLoading, setIsGeminiLoading] = useState(false);
   const [geminiError, setGeminiError] = useState(null);
@@ -106,68 +97,45 @@ export default function App() {
   
   const [newEvent, setNewEvent] = useState(initialEventState);
 
-  // --- Gemini API Call Function ---
-  const callGeminiApi = async (prompt, systemPrompt) => {
-    setIsGeminiLoading(true);
-    setGeminiResult(null);
-    setGeminiError(null);
-    alert("La función de IA requiere una API Key configurada en el código.");
-    setIsGeminiLoading(false);
+  // --- Gemini Stub ---
+  const handleGenerateStudyPlan = async () => {
+     alert("Configura la API Key de Gemini para usar IA.");
+  };
+  const handleAnalyzeNotes = async () => {
+     alert("Configura la API Key de Gemini para usar IA.");
   };
 
-  const handleGenerateStudyPlan = async () => callGeminiApi();
-  const handleAnalyzeNotes = async () => callGeminiApi();
-
-
-  // --- 1. EFECTO DE AUTENTICACIÓN ---
+  // --- 1. EFECTO DE AUTENTICACIÓN (Google) ---
   useEffect(() => {
     if (!auth) return;
-
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-        if (user) {
-            console.log("Conectado a Firebase como:", user.uid);
-            setUserId(user.uid);
-            setConnectionError(null);
-            setIsLoading(false); 
-        } else {
-            console.log("Intentando login anónimo...");
-            signInAnonymously(auth)
-                .catch((error) => {
-                    console.error("Error Auth:", error);
-                    if (error.code === 'auth/operation-not-allowed') {
-                        setConnectionError("Debes habilitar el proveedor 'Anónimo' en la consola de Firebase (Authentication > Sign-in method).");
-                    } else {
-                        setConnectionError(`Error de conexión: ${error.code}`);
-                    }
-                    setIsLoading(false); 
-                });
-        }
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+        setAuthLoading(false);
     });
-
-    return () => unsubscribeAuth();
+    return () => unsubscribe();
   }, []);
 
-  // --- 2. EFECTO DE LECTURA DE DATOS ---
+  // --- 2. EFECTO DE LECTURA DE DATOS (Solo si hay usuario) ---
   useEffect(() => {
-    if (!db || !userId) return; 
+    if (!db || !user) return; 
 
-    const eventsCollectionRef = collection(db, 'users', userId, 'events');
-    const eventsQuery = query(eventsCollectionRef); 
+    // Ruta personalizada por usuario: users/{uid}/events
+    const eventsRef = collection(db, 'users', user.uid, 'events');
+    const q = query(eventsRef);
 
-    const unsubscribeSnapshot = onSnapshot(eventsQuery, (snapshot) => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedEvents = snapshot.docs.map(doc => ({
         ...doc.data(),
         id: doc.id,
-        notificationId: doc.id 
       }));
       setEvents(fetchedEvents);
     }, (error) => {
-      console.error("Error Firestore:", error);
-      addNotification("Error de conexión a base de datos");
+      console.error("Error leyendo datos:", error);
+      addNotification("Error de sincronización");
     });
 
-    return () => unsubscribeSnapshot();
-  }, [userId]); 
+    return () => unsubscribe();
+  }, [user]); 
 
   // --- 3. SISTEMA DE RECORDATORIOS ---
   useEffect(() => {
@@ -194,10 +162,28 @@ export default function App() {
     return () => clearInterval(interval);
   }, [events, notifiedEvents]);
 
-  // --- FUNCIONES DE LIMPIEZA Y CIERRE ---
-  
+  // --- FUNCIONES DE AUTH ---
+  const handleGoogleLogin = async () => {
+    try {
+        await signInWithPopup(auth, provider);
+    } catch (error) {
+        console.error("Error login:", error);
+        alert("Error al iniciar sesión: " + error.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+        await signOut(auth);
+        setEvents([]); // Limpiar eventos locales al salir
+    } catch (error) {
+        console.error("Error logout:", error);
+    }
+  };
+
+  // --- UI Helpers ---
   const resetForm = () => {
-      setNewEvent(initialEventState); // Volver a poner todo en blanco
+      setNewEvent(initialEventState);
       setEditingId(null);
       setGeminiResult(null);
       setGeminiError(null);
@@ -205,25 +191,40 @@ export default function App() {
 
   const closeModal = () => { 
       setIsModalOpen(false); 
-      resetForm(); // Limpiar al cerrar
+      resetForm(); 
   };
 
   const openNewEventModal = (dateStr) => {
       setSelectedDate(dateStr);
-      resetForm(); // Limpiar antes de abrir uno nuevo
+      resetForm();
       setIsModalOpen(true);
+  };
+
+  const addNotification = (msg) => {
+      const id = Date.now();
+      setNotifications(prev => [...prev, { id, message: msg }]);
+      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
+  };
+  
+  // Helpers de Fecha y Color
+  const getDaysInMonth = (date) => {
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      return { days: new Date(year, month + 1, 0).getDate(), firstDay: new Date(year, month, 1).getDay() };
+  };
+  const formatDateStr = (date) => date.toISOString().split('T')[0];
+  const createDateFromDay = (year, monthIndex, day) => formatDateStr(new Date(year, monthIndex, day));
+  const getTypeColor = (type, isSolid = false) => {
+      const c = COLOR_MAP[type] || COLOR_MAP.lecture;
+      return isSolid ? c.solid : c.bg;
   };
 
   // --- LÓGICA CRUD ---
   const handleSaveEvent = async (e) => {
     e.preventDefault();
+    if (!user) return alert("Debes iniciar sesión.");
 
-    if (!userId) {
-        alert("⛔ ERROR DE CONEXIÓN: No se puede guardar porque no hay usuario identificado. Revisa la consola de Firebase.");
-        return;
-    }
-
-    const eventsRef = collection(db, 'users', userId, 'events');
+    const eventsRef = collection(db, 'users', user.uid, 'events');
     const eventData = { ...newEvent, date: selectedDate };
 
     try {
@@ -234,92 +235,89 @@ export default function App() {
             await addDoc(eventsRef, eventData);
             addNotification('Creado exitosamente');
         }
-        // CERRAR AUTOMÁTICAMENTE AL GUARDAR
         closeModal(); 
     } catch (error) {
-        console.error("Error al guardar:", error);
-        alert(`Error al guardar en la nube: ${error.message}`);
+        console.error("Error guardando:", error);
+        alert("Error al guardar en la nube.");
     }
   };
 
   const handleDeleteEvent = async (e, id) => {
     if (e) e.stopPropagation();
     if (!window.confirm('¿Eliminar?')) return;
-    const eventsRef = collection(db, 'users', userId, 'events');
     try {
-        await deleteDoc(doc(eventsRef, id));
+        await deleteDoc(doc(db, 'users', user.uid, 'events', id));
         addNotification('Eliminado');
         if (editingId === id) closeModal();
-    } catch (error) {
-        console.error("Error eliminar:", error);
-    }
+    } catch (error) { console.error(error); }
   };
   
   const handleDrop = async (e, targetDate) => {
     e.preventDefault();
-    if (!draggedEvent) return;
-    const eventsRef = collection(db, 'users', userId, 'events');
+    if (!draggedEvent || !user) return;
     try {
-        await updateDoc(doc(eventsRef, draggedEvent.id), { date: targetDate });
+        await updateDoc(doc(db, 'users', user.uid, 'events', draggedEvent.id), { date: targetDate });
         addNotification(`Movido al ${targetDate}`);
         setDraggedEvent(null);
     } catch (error) { console.error(error); }
   };
 
-  // --- UI Helpers ---
-  const getDaysInMonth = (date) => {
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const days = new Date(year, month + 1, 0).getDate();
-    const firstDay = new Date(year, month, 1).getDay();
-    return { days, firstDay };
-  };
-  const formatDateStr = (date) => date.toISOString().split('T')[0];
-  const createDateFromDay = (year, monthIndex, day) => formatDateStr(new Date(year, monthIndex, day));
-  const getTypeColor = (type, isSolid = false) => {
-    const c = COLOR_MAP[type] || COLOR_MAP.lecture;
-    return isSolid ? c.solid : c.bg;
-  };
-  const addNotification = (msg) => {
-      const id = Date.now();
-      setNotifications(prev => [...prev, { id, message: msg }]);
-      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 4000);
-  };
+  // --------------------------------------------------------------------------
+  // --- VISTA DE LOGIN (Si no hay usuario) ---
+  // --------------------------------------------------------------------------
+  if (authLoading) return <div className="h-screen flex items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div></div>;
 
-  // --- RENDER ---
-
-  // Pantalla de Error de Conexión
-  if (connectionError) {
+  if (!user) {
       return (
-          <div className="min-h-screen flex items-center justify-center bg-red-50 p-4 font-sans">
-              <div className="bg-white p-6 rounded-xl shadow-xl max-w-lg border border-red-200 text-center animate-bounce-in">
-                  <WifiOff size={48} className="mx-auto text-red-500 mb-4"/>
-                  <h2 className="text-xl font-bold text-red-700 mb-2">Problema de Conexión con Firebase</h2>
-                  <p className="text-gray-700 mb-4">{connectionError}</p>
-                  <button onClick={() => window.location.reload()} className="mt-6 bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 font-bold transition-colors shadow-lg">
-                    Reintentar Conexión
-                  </button>
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans">
+           <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full text-center">
+              <div className="bg-indigo-100 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6">
+                  <GraduationCap size={40} className="text-indigo-600" />
               </div>
-          </div>
+              <h1 className="text-3xl font-extrabold text-slate-800 mb-2">UniPlanner</h1>
+              <p className="text-slate-500 mb-8">Tu agenda académica en la nube. Accede desde cualquier dispositivo.</p>
+              
+              <button 
+                onClick={handleGoogleLogin}
+                className="w-full flex items-center justify-center gap-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-3 px-4 rounded-xl transition-all shadow-sm"
+              >
+                 <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-6 h-6" />
+                 Continuar con Google
+              </button>
+           </div>
+        </div>
       );
   }
 
+  // --------------------------------------------------------------------------
+  // --- VISTA PRINCIPAL (Calendario) ---
+  // --------------------------------------------------------------------------
   return (
     <div className="min-h-screen bg-gray-50 text-slate-800 font-sans pb-8">
-      {/* ... HEADER ... */}
+      {/* Header */}
       <header className="bg-white shadow-sm sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
             <div className="flex items-center gap-3">
                 <div className="bg-indigo-600 p-2 rounded-lg text-white"><GraduationCap size={20} /></div>
-                <h1 className="text-xl font-extrabold text-gray-900 tracking-tight">UniPlanner <span className="text-indigo-600">.</span></h1>
+                <h1 className="text-xl font-extrabold text-gray-900 tracking-tight hidden sm:block">UniPlanner <span className="text-indigo-600">.</span></h1>
             </div>
-            <button onClick={() => openNewEventModal(new Date().toISOString().split('T')[0])} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition-all flex items-center gap-2">
-                <Plus size={18}/> <span>Nueva</span>
-            </button>
+            
+            <div className="flex items-center gap-3">
+                <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-gray-100 rounded-full">
+                    {user.photoURL ? <img src={user.photoURL} className="w-6 h-6 rounded-full" alt="user"/> : <User size={16}/>}
+                    <span className="text-xs font-bold text-gray-600 truncate max-w-[100px]">{user.displayName}</span>
+                </div>
+                <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Cerrar Sesión">
+                    <LogOut size={20} />
+                </button>
+                <button onClick={() => openNewEventModal(new Date().toISOString().split('T')[0])} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition-all flex items-center gap-2">
+                    <Plus size={18}/> <span className="hidden sm:inline">Nueva</span>
+                </button>
+            </div>
         </div>
       </header>
 
-      {/* ... MAIN CALENDAR ... */}
+      {/* Main */}
       <main className="max-w-7xl mx-auto px-4 py-6">
          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6 min-h-[500px]">
             <div className="flex justify-between mb-4 items-center">
@@ -328,15 +326,15 @@ export default function App() {
                     {currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric'})}
                 </h2>
                 <div className="flex gap-2 bg-gray-50 p-1 rounded-lg">
-                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1)))} className="p-2 hover:bg-white hover:shadow-sm rounded-md transition-all"><ChevronLeft size={20}/></button>
-                    <button onClick={() => setCurrentDate(new Date())} className="px-3 text-xs font-bold text-indigo-600 hover:bg-white hover:shadow-sm rounded-md transition-all">Hoy</button>
-                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1)))} className="p-2 hover:bg-white hover:shadow-sm rounded-md transition-all"><ChevronRight size={20}/></button>
+                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1)))} className="p-2 hover:bg-white hover:shadow-sm rounded-md"><ChevronLeft size={20}/></button>
+                    <button onClick={() => setCurrentDate(new Date())} className="px-3 text-xs font-bold text-indigo-600 hover:bg-white hover:shadow-sm rounded-md">Hoy</button>
+                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1)))} className="p-2 hover:bg-white hover:shadow-sm rounded-md"><ChevronRight size={20}/></button>
                 </div>
             </div>
             
             <div className="grid grid-cols-7 gap-2 mb-2">
-                 {["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"].map(day => (
-                     <div key={day} className="text-center text-xs font-bold text-gray-400 uppercase tracking-wider">{day}</div>
+                 {["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"].map(d => (
+                     <div key={d} className="text-center text-xs font-bold text-gray-400 uppercase tracking-wider">{d}</div>
                  ))}
             </div>
 
@@ -383,7 +381,7 @@ export default function App() {
          </div>
       </main>
 
-      {/* ... TOASTS ... */}
+      {/* Toasts */}
       <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
         {notifications.map(n => (
           <div key={n.id} className="bg-gray-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in-up pointer-events-auto border border-gray-700">
@@ -392,7 +390,7 @@ export default function App() {
         ))}
       </div>
 
-      {/* ... MODAL ... */}
+      {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl animate-fade-in-up transform transition-all scale-100">
@@ -449,7 +447,6 @@ export default function App() {
                     <textarea placeholder="Detalles adicionales..." className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none h-24 resize-none" value={newEvent.description} onChange={e => setNewEvent({...newEvent, description: e.target.value})}></textarea>
                   </div>
                   
-                  {/* Botones IA (Placeholder) */}
                   <div className="flex gap-2">
                       <button type="button" onClick={handleGenerateStudyPlan} disabled={isGeminiLoading} className="flex-1 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100 flex justify-center items-center gap-2 transition-colors">
                           <Sparkles size={14}/> Generar Plan
